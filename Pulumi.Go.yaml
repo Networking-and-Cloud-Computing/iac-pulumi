@@ -4,3 +4,11 @@ config:
   vpcName: "my-vpc"
   cidrBlock: 10.0.0.0/16
   destinationBlock: 0.0.0.0/0
+  publicSubnetName : "public-subnet-"
+  privateSubnetName: "private-subnet-"
+  internetGatewayName : "Internet-Gateway"
+  publicRouteTableName : "Public-Route-Table"
+  privateRouteTableName: "Private-Route-Table"
+  publicRouteAssociationName : "public-RTA-"
+  privateRouteAssociationName : "private-RTA-"
+  

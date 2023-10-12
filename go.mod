@@ -3,6 +3,7 @@ module iac-pulumi
 go 1.21
 
 require (
+	github.com/c-robinson/iplib v1.0.7
 	github.com/pulumi/pulumi-aws/sdk/v6 v6.5.0
 	github.com/pulumi/pulumi/sdk/v3 v3.88.1
 )
@@ -17,7 +18,6 @@ require (
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect
-	github.com/c-robinson/iplib v1.0.7 // indirect
 	github.com/charmbracelet/bubbles v0.16.1 // indirect
 	github.com/charmbracelet/bubbletea v0.24.2 // indirect
 	github.com/charmbracelet/lipgloss v0.7.1 // indirect
