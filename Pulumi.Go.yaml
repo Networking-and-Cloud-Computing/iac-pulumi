@@ -11,4 +11,7 @@ config:
   privateRouteTableName: "Private-Route-Table"
   publicRouteAssociationName : "public-RTA-"
   privateRouteAssociationName : "private-RTA-"
+  instanceType : "t2.micro"
+  publicSubnetID : "subnet-0d7667cd2ec06c09e"
+  amiID : "ami-01eca5c416f4e670d"
   
