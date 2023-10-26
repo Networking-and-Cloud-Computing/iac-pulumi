@@ -292,7 +292,6 @@ func main() {
 		})
 		return err
 	})
-
 }
 
 func ingressArgs(cidr, protocol string, fromPort int) ec2.SecurityGroupIngressInput {
