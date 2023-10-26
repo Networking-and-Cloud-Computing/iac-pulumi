@@ -4,6 +4,7 @@ import (
 	"github.com/c-robinson/iplib"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/ec2"
+	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/rds"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi/config"
 	"net"
@@ -12,20 +13,34 @@ import (
 )
 
 func main() {
+	userData := `#!/bin/bash
+	{
+		echo "spring.jpa.hibernate.ddl-auto=update"
+		echo "spring.datasource.url=jdbc:postgresql://${HOST}/${DB_Name}"
+		echo "spring.datasource.username=${DB_USER}"
+		echo "spring.datasource.password=${DB_PASSWORD}"
+		echo "spring.profiles.active=development"
+		echo "spring.jpa.show-sql=true"
+		echo "logging.level.org.springframework.security=info"
+	} >> /opt/application.properties`
+	userData = strings.Replace(userData, "${DB_Name}", "Joshi", -1)
+	userData = strings.Replace(userData, "${DB_USER}", "cjoshi", -1)
+	userData = strings.Replace(userData, "${DB_PASSWORD}", "Password123", -1)
+
 	pulumi.Run(func(ctx *pulumi.Context) error {
 		c := config.New(ctx, "")
 		cidrBlock := c.Require("cidrBlock")
 		vpcName := c.Require("vpcName")
 		destinationBlock := c.Require("destinationBlock")
 		publicSubnet := c.Require("publicSubnetName")
-		privateSubnet := c.Require("privateSubnetName")
+		privateSubnetName := c.Require("privateSubnetName")
 		internetGatewayName := c.Require("internetGatewayName")
 		publicRouteTableName := c.Require("publicRouteTableName")
 		privateRouteTableName := c.Require("privateRouteTableName")
 		publicRouteAssociationName := c.Require("publicRouteAssociationName")
 		privateRouteAssociationName := c.Require("privateRouteAssociationName")
 		instanceType := c.Require("instanceType")
-		publicSubnetID := c.Require("publicSubnetID")
+		//publicSubnetID := c.Require("publicSubnetID")
 		amiID := c.Require("amiID")
 		availabilityZones, err := aws.GetAvailabilityZones(ctx, &aws.GetAvailabilityZonesArgs{
 			State: pulumi.StringRef("available"),
@@ -59,69 +74,24 @@ func main() {
 		for i, subnet := range subnets {
 			subnetStrings[i] = subnet.String()
 		}
-		//Create an ec2 Security Group
-		securityGroup, err := ec2.NewSecurityGroup(ctx, "webSecurityGroup", &ec2.SecurityGroupArgs{
-			Description: pulumi.String("Enable HTTP and SSH access"),
-			Egress:      ec2.SecurityGroupEgressArray{egressArgs("0.0.0.0/0", "all")},
-			Ingress: ec2.SecurityGroupIngressArray{
-				ingressArgs("0.0.0.0/0", "tcp", 22),
-				ingressArgs("0.0.0.0/0", "tcp", 80),
-				ingressArgs("0.0.0.0/0", "tcp", 443),
-				// Add additional port number that your application runs on.
-				ingressArgs("0.0.0.0/0", "tcp", 8080),
-			},
-			Tags: pulumi.StringMap{
-				"Name": pulumi.String("application_security_group"),
-			},
-		})
 
-		if err != nil {
-			return err
+		// Create 3 Private Subnets
+		privateSubnets := make([]*ec2.Subnet, 0, subnetCount)
+		for i := 0; i < subnetCount; i++ {
+			privateSubnet, err := ec2.NewSubnet(ctx, privateSubnetName+strconv.Itoa(i), &ec2.SubnetArgs{
+				VpcId:            vpc.ID(),
+				CidrBlock:        pulumi.String(subnetStrings[i+subnetCount]),
+				AvailabilityZone: pulumi.String(availabilityZones.Names[i]),
+				Tags: pulumi.StringMap{
+					"Name": pulumi.String(privateSubnetName + strconv.Itoa(i)),
+				},
+			})
+			if err != nil {
+				return err
+			}
+			privateSubnets = append(privateSubnets, privateSubnet)
 		}
-		//// Look Up for the AMI
-		//ami, err := ec2.LookupAmi(ctx, &ec2.LookupAmiArgs{
-		//	MostRecent: pulumi.BoolRef(true),
-		//	Filters: []ec2.GetAmiFilter{
-		//		{
-		//			Name: "name",
-		//			Values: []string{
-		//				"Cloud",
-		//			},
-		//		},
-		//		{
-		//			Name: "virtualization-type",
-		//			Values: []string{
-		//				"hvm",
-		//			},
-		//		},
-		//	},
-		//	Owners: []string{
-		//		"172266639576",
-		//	},
-		//}, nil)
-		//if err != nil {
-		//	return err
-		//}
-		// Create a New Ec2 Instance with the above Security Group
-		_, err = ec2.NewInstance(ctx, "Cloud", &ec2.InstanceArgs{
-			InstanceType:          pulumi.String(instanceType),
-			SubnetId:              pulumi.String(publicSubnetID),
-			VpcSecurityGroupIds:   pulumi.StringArray{securityGroup.ID()},
-			Ami:                   pulumi.String(amiID),
-			KeyName:               pulumi.String("Cloud"),
-			DisableApiTermination: pulumi.Bool(false),
-			RootBlockDevice: &ec2.InstanceRootBlockDeviceArgs{
-				VolumeSize: pulumi.Int(25),
-				VolumeType: pulumi.String("gp2"),
-			},
-			Tags: pulumi.StringMap{
-				"Name": pulumi.String("Cloud-EC2-Instance"),
-			},
-		})
-		if err != nil {
-			return err
-		}
-		//ctx.Export("instanceID", instance.ID())
+
 		// Create 3 Public Subnets
 
 		publicSubnets := make([]*ec2.Subnet, 0, subnetCount)
@@ -141,21 +111,99 @@ func main() {
 			publicSubnets = append(publicSubnets, publicSubnet)
 		}
 
-		// Create 3 Private Subnets
-		privateSubnets := make([]*ec2.Subnet, 0, subnetCount)
-		for i := 0; i < subnetCount; i++ {
-			privateSubnet, err := ec2.NewSubnet(ctx, privateSubnet+strconv.Itoa(i), &ec2.SubnetArgs{
-				VpcId:            vpc.ID(),
-				CidrBlock:        pulumi.String(subnetStrings[i+subnetCount]),
-				AvailabilityZone: pulumi.String(availabilityZones.Names[i]),
-				Tags: pulumi.StringMap{
-					"Name": pulumi.String(privateSubnet + strconv.Itoa(i)),
-				},
-			})
-			if err != nil {
-				return err
-			}
-			privateSubnets = append(privateSubnets, privateSubnet)
+		var publicsubnetIds pulumi.StringArray
+		for i := range publicSubnets {
+			publicsubnetIds = append(publicsubnetIds, publicSubnets[i].ID())
+		}
+		//Create an ec2 Security Group
+		securityGroup, err := ec2.NewSecurityGroup(ctx, "webSecurityGroup", &ec2.SecurityGroupArgs{
+			Description: pulumi.String("Enable HTTP and SSH access"),
+			VpcId:       vpc.ID(),
+			Egress:      ec2.SecurityGroupEgressArray{egressArgs("0.0.0.0/0", "all")},
+			Ingress: ec2.SecurityGroupIngressArray{
+				ingressArgs("0.0.0.0/0", "tcp", 22),
+				ingressArgs("0.0.0.0/0", "tcp", 80),
+				ingressArgs("0.0.0.0/0", "tcp", 443),
+				// Add additional port number that your application runs on.
+				ingressArgs("0.0.0.0/0", "tcp", 8080),
+			},
+			Tags: pulumi.StringMap{
+				"Name": pulumi.String("application_security_group"),
+			},
+		})
+		if err != nil {
+			return err
+		}
+
+		//Create DB Security Group
+		databaseSecurityGroup, err := ec2.NewSecurityGroup(ctx, "dbSecurityGroup", &ec2.SecurityGroupArgs{
+			Description: pulumi.String("Enable Database Access"),
+			VpcId:       vpc.ID(),
+			Ingress: ec2.SecurityGroupIngressArray{&ec2.SecurityGroupIngressArgs{
+
+				Protocol:       pulumi.String("tcp"),
+				FromPort:       pulumi.Int(5432),
+				ToPort:         pulumi.Int(5432),
+				SecurityGroups: pulumi.StringArray{securityGroup.ID()},
+			}},
+		})
+		if err != nil {
+			return err
+		}
+		_, err = ec2.NewSecurityGroupRule(ctx, "application-security-group-egress-rule", &ec2.SecurityGroupRuleArgs{
+			FromPort:              pulumi.Int(5432),
+			ToPort:                pulumi.Int(5432),
+			Protocol:              pulumi.String("tcp"),
+			Type:                  pulumi.String("egress"),
+			SourceSecurityGroupId: databaseSecurityGroup.ID(),
+			SecurityGroupId:       securityGroup.ID(),
+		})
+		if err != nil {
+			return err
+		}
+		//Create a parameter Group
+		parameterGroup, err := rds.NewParameterGroup(ctx, "why-gawdd-why", &rds.ParameterGroupArgs{
+			Description: pulumi.String("Custom Parameter Group"),
+			Family:      pulumi.String("postgres12"),
+			Name:        pulumi.String("why-gawdd-why"),
+		})
+		if err != nil {
+			return err
+		}
+
+		var subnetIds pulumi.StringArray
+		for i := range privateSubnets {
+			subnetIds = append(subnetIds, privateSubnets[i].ID())
+		}
+
+		privateSubnetGroup, err := rds.NewSubnetGroup(ctx, "whyareyoustillalive", &rds.SubnetGroupArgs{
+			SubnetIds: subnetIds,
+			Tags: pulumi.StringMap{
+				"Name": pulumi.String("whyareyoustillalive"),
+			},
+		})
+		if err != nil {
+			return err
+		}
+		// Create RDS Instance
+		//
+		rdsInstance, err := rds.NewInstance(ctx, "please-work", &rds.InstanceArgs{
+			AllocatedStorage:    pulumi.Int(20),
+			Engine:              pulumi.String("postgres"),
+			EngineVersion:       pulumi.String("12"),
+			ParameterGroupName:  parameterGroup.Name,
+			VpcSecurityGroupIds: pulumi.StringArray{databaseSecurityGroup.ID()},
+			InstanceClass:       pulumi.String("db.t2.micro"),
+			DbName:              pulumi.String("Joshi"),
+			Username:            pulumi.String("cjoshi"),
+			Password:            pulumi.String("Password123"),
+			SkipFinalSnapshot:   pulumi.Bool(true),
+			MultiAz:             pulumi.Bool(false),
+			PubliclyAccessible:  pulumi.Bool(false),
+			DbSubnetGroupName:   privateSubnetGroup.Name,
+		})
+		if err != nil {
+			return err
 		}
 
 		// Create a Internet gateway
@@ -210,6 +258,7 @@ func main() {
 				return err
 			}
 		}
+
 		public_route, err := ec2.NewRoute(ctx, "public-route", &ec2.RouteArgs{
 			RouteTableId:         publicRouteTable.ID(),
 			DestinationCidrBlock: pulumi.String(destinationBlock),
@@ -219,9 +268,31 @@ func main() {
 			return err
 		}
 		ctx.Export("PublicRouteID", public_route.ID())
+		_, err = ec2.NewInstance(ctx, "IAMDEAD", &ec2.InstanceArgs{
+			InstanceType:          pulumi.String(instanceType),
+			SubnetId:              publicsubnetIds[0],
+			VpcSecurityGroupIds:   pulumi.StringArray{securityGroup.ID()},
+			Ami:                   pulumi.String(amiID),
+			KeyName:               pulumi.String("Cloud"),
+			DisableApiTermination: pulumi.Bool(false),
+			UserData: rdsInstance.Endpoint.ApplyT(
+				func(args interface{}) (string, error) {
+					endpoint := args.(string)
+					userData = strings.Replace(userData, "${HOST}", endpoint, -1)
+					return userData, nil
+				},
+			).(pulumi.StringOutput),
+			RootBlockDevice: &ec2.InstanceRootBlockDeviceArgs{
+				VolumeSize: pulumi.Int(25),
+				VolumeType: pulumi.String("gp2"),
+			},
+			Tags: pulumi.StringMap{
+				"Name": pulumi.String("IAMDEAD"),
+			},
+		})
 		return err
-
 	})
+
 }
 
 func ingressArgs(cidr, protocol string, fromPort int) ec2.SecurityGroupIngressInput {
