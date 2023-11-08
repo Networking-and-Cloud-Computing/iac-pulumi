@@ -1,10 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"github.com/c-robinson/iplib"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/ec2"
+	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/iam"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/rds"
+	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/route53"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi/config"
 	"net"
@@ -20,9 +23,16 @@ func main() {
 		echo "spring.datasource.username=${DB_USER}"
 		echo "spring.datasource.password=${DB_PASSWORD}"
 		echo "spring.profiles.active=development"
-		echo "spring.jpa.show-sql=true"
 		echo "logging.level.org.springframework.security=info"
-	} >> /opt/application.properties`
+		echo "env.domain=localhost"
+	} >> /opt/application.properties
+	{
+		sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+    		-a fetch-config \
+    		-m ec2 \
+    		-c file:/opt/cloudwatch-config.json \
+    		-s
+	}`
 	userData = strings.Replace(userData, "${DB_Name}", "Joshi", -1)
 	userData = strings.Replace(userData, "${DB_USER}", "cjoshi", -1)
 	userData = strings.Replace(userData, "${DB_PASSWORD}", "Password123", -1)
@@ -40,6 +50,12 @@ func main() {
 		publicRouteAssociationName := c.Require("publicRouteAssociationName")
 		privateRouteAssociationName := c.Require("privateRouteAssociationName")
 		instanceType := c.Require("instanceType")
+		domainName := c.Require("domain")
+		dbName := c.Require("dbName")
+		dbUserName := c.Require("dbUserName")
+		dbPassword := c.Require("dbPassword")
+		privateSubnetGroupName := c.Require("privateSubnetGroupName")
+		rdsInstanceName := c.Require("rdsInstanceName")
 		//publicSubnetID := c.Require("publicSubnetID")
 		amiID := c.Require("amiID")
 		availabilityZones, err := aws.GetAvailabilityZones(ctx, &aws.GetAvailabilityZonesArgs{
@@ -176,10 +192,10 @@ func main() {
 			subnetIds = append(subnetIds, privateSubnets[i].ID())
 		}
 
-		privateSubnetGroup, err := rds.NewSubnetGroup(ctx, "whyareyoustillalive", &rds.SubnetGroupArgs{
+		privateSubnetGroup, err := rds.NewSubnetGroup(ctx, privateSubnetGroupName, &rds.SubnetGroupArgs{
 			SubnetIds: subnetIds,
 			Tags: pulumi.StringMap{
-				"Name": pulumi.String("whyareyoustillalive"),
+				"Name": pulumi.String(privateSubnetGroupName),
 			},
 		})
 		if err != nil {
@@ -187,20 +203,23 @@ func main() {
 		}
 		// Create RDS Instance
 		//
-		rdsInstance, err := rds.NewInstance(ctx, "please-work", &rds.InstanceArgs{
+		rdsInstance, err := rds.NewInstance(ctx, rdsInstanceName, &rds.InstanceArgs{
 			AllocatedStorage:    pulumi.Int(20),
 			Engine:              pulumi.String("postgres"),
 			EngineVersion:       pulumi.String("12"),
 			ParameterGroupName:  parameterGroup.Name,
 			VpcSecurityGroupIds: pulumi.StringArray{databaseSecurityGroup.ID()},
 			InstanceClass:       pulumi.String("db.t2.micro"),
-			DbName:              pulumi.String("Joshi"),
-			Username:            pulumi.String("cjoshi"),
-			Password:            pulumi.String("Password123"),
+			DbName:              pulumi.String(dbName),
+			Username:            pulumi.String(dbUserName),
+			Password:            pulumi.String(dbPassword),
 			SkipFinalSnapshot:   pulumi.Bool(true),
 			MultiAz:             pulumi.Bool(false),
 			PubliclyAccessible:  pulumi.Bool(false),
 			DbSubnetGroupName:   privateSubnetGroup.Name,
+			//Tags: pulumi.StringMap{
+			//	"Name": pulumi.String(rdsInstanceName),
+			//},
 		})
 		if err != nil {
 			return err
@@ -268,7 +287,60 @@ func main() {
 			return err
 		}
 		ctx.Export("PublicRouteID", public_route.ID())
-		_, err = ec2.NewInstance(ctx, "IAMDEAD", &ec2.InstanceArgs{
+
+		// Get the zone created
+		zoneID, err := route53.LookupZone(ctx, &route53.LookupZoneArgs{
+			Name: pulumi.StringRef(domainName),
+		}, nil)
+
+		if err != nil {
+			return err
+		}
+
+		// Create a new Role
+		tmpJSON0, err := json.Marshal(map[string]interface{}{
+			"Version": "2012-10-17",
+			"Statement": []map[string]interface{}{
+				map[string]interface{}{
+					"Action": "sts:AssumeRole",
+					"Effect": "Allow",
+					"Sid":    "",
+					"Principal": map[string]interface{}{
+						"Service": "ec2.amazonaws.com",
+					},
+				},
+			},
+		})
+		if err != nil {
+			return err
+		}
+		json0 := string(tmpJSON0)
+		role, err := iam.NewRole(ctx, "death", &iam.RoleArgs{
+			AssumeRolePolicy: pulumi.String(json0),
+			Tags: pulumi.StringMap{
+				"tag-key": pulumi.String("tag-value"),
+			},
+		})
+		if err != nil {
+			return err
+		}
+		// Create a new IAM instance profile with the created IAM role.
+		instanceProfile, err := iam.NewInstanceProfile(ctx, "instanceProfile", &iam.InstanceProfileArgs{
+			Role: role.Name,
+		})
+		if err != nil {
+			return err
+		}
+		// Attach the new Role
+		_, err = iam.NewRolePolicyAttachment(ctx, "myRolePolicyAttachment", &iam.RolePolicyAttachmentArgs{
+			Role:      role.Name,
+			PolicyArn: pulumi.String("arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"),
+		})
+		if err != nil {
+			return err
+		}
+
+		instance, err := ec2.NewInstance(ctx, "HelloWorld-1", &ec2.InstanceArgs{
 			InstanceType:          pulumi.String(instanceType),
 			SubnetId:              publicsubnetIds[0],
 			VpcSecurityGroupIds:   pulumi.StringArray{securityGroup.ID()},
@@ -282,14 +354,61 @@ func main() {
 					return userData, nil
 				},
 			).(pulumi.StringOutput),
+			IamInstanceProfile: instanceProfile.ID(),
 			RootBlockDevice: &ec2.InstanceRootBlockDeviceArgs{
 				VolumeSize: pulumi.Int(25),
 				VolumeType: pulumi.String("gp2"),
 			},
 			Tags: pulumi.StringMap{
-				"Name": pulumi.String("IAMDEAD"),
+				"Name": pulumi.String("PHOENIX"),
 			},
 		})
+		if err != nil {
+			return err
+		}
+
+		////Create a Load Balancer
+		//lb, err := elb.NewLoadBalancer(ctx, "LoadBalancer", &elb.LoadBalancerArgs{
+		//	//AvailabilityZones: pulumi.StringArray{
+		//	//	pulumi.String("us-east-1a"),
+		//	//},
+		//	Listeners: elb.LoadBalancerListenerArray{
+		//		&elb.LoadBalancerListenerArgs{
+		//			InstancePort:     pulumi.Int(80),
+		//			InstanceProtocol: pulumi.String("http"),
+		//			LbPort:           pulumi.Int(80),
+		//			LbProtocol:       pulumi.String("http"),
+		//		},
+		//	},
+		//	Subnets:   pulumi.StringArray{publicsubnetIds[0]},
+		//	Instances: pulumi.StringArray{instance.ID()},
+		//})
+		//if err != nil {
+		//	return err
+		//}
+
+		// Create a new A Record
+		_, err = route53.NewRecord(ctx, "A-RECORD", &route53.RecordArgs{
+			Name:    pulumi.String(domainName),
+			Type:    pulumi.String("A"),
+			Ttl:     pulumi.Int(60),
+			ZoneId:  pulumi.String(zoneID.Id),
+			Records: pulumi.StringArray{instance.PublicIp},
+			//Aliases: route53.RecordAliasArray{
+			//	&route53.RecordAliasArgs{
+			//		EvaluateTargetHealth: pulumi.Bool(true),
+			//		Name:                 instance.PublicDns,
+			//		ZoneId:               instance.ZoneId,
+			//		//.ToStringOutput().ApplyT(func(zoneId string) pulumi.StringInput {
+			//		//		return pulumi.String(zoneId)
+			//		//	}).(pulumi.StringInput),
+			//	},
+			//},
+		})
+		if err != nil {
+			return err
+		}
+
 		return err
 	})
 }
