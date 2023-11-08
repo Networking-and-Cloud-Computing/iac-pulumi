@@ -12,7 +12,7 @@ config:
   publicRouteAssociationName : "public-RTA-"
   privateRouteAssociationName : "private-RTA-"
   instanceType : "t2.micro"
-  amiID : "ami-01c4fbaf3602de6a5"
+  amiID : "ami-05a3f04e0e83bbbe8"
   dbName : "Joshi"
   dbUserName : "cjoshi"
   dbPassword : "Password123"
@@ -20,4 +20,5 @@ config:
   privateSubnetGroupName : "alive"
   rdsInstanceName : "please-work"
   dbSecurityGroupName : "dbSecurityGroup"
+  domain: "dev.cjoshi.tech"
   
