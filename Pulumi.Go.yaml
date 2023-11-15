@@ -12,7 +12,7 @@ config:
   publicRouteAssociationName : "public-RTA-"
   privateRouteAssociationName : "private-RTA-"
   instanceType : "t2.micro"
-  amiID : "ami-0ad89969d9a6ed3b5"
+  amiID : "ami-0a8ba6b7794bde783"
   dbName : "Joshi"
   dbUserName : "cjoshi"
   dbPassword : "Password123"
