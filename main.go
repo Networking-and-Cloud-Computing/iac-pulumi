@@ -416,7 +416,7 @@ func main() {
 		})
 
 		//Create a Launch Template
-		launchTemplate, err := ec2.NewLaunchTemplate(ctx, "launchTemplate-1", &ec2.LaunchTemplateArgs{
+		launchTemplate, err := ec2.NewLaunchTemplate(ctx, "launchTemplate", &ec2.LaunchTemplateArgs{
 			ImageId:               pulumi.String(amiID),
 			InstanceType:          pulumi.String(instanceType),
 			KeyName:               pulumi.String("Cloud"),
