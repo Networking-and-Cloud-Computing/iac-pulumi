@@ -476,7 +476,7 @@ func main() {
 			LaunchTemplate: &autoscaling.GroupLaunchTemplateArgs{
 				Id: launchTemplate.ID(),
 			},
-			VpcZoneIdentifiers: pulumi.StringArray{subnetIds[0]},
+			VpcZoneIdentifiers: pulumi.StringArray{publicsubnetIds[0]},
 			TargetGroupArns:    pulumi.StringArray{tg.Arn},
 		})
 		if err != nil {
@@ -520,32 +520,7 @@ func main() {
 			AlarmActions: pulumi.Array{
 				scaleupPolicy.Arn,
 			},
-=======
 			},
-			VpcZoneIdentifiers: pulumi.StringArray{subnetIds[0]},
-			TargetGroupArns:    pulumi.StringArray{tg.Arn},
-		})
-		if err != nil {
-			return err
-		}
-		// Create scale up policy
-		scaleupPolicy, err := autoscaling.NewPolicy(ctx, "scale-up-policy", &autoscaling.PolicyArgs{
-			AdjustmentType:       pulumi.String("ChangeInCapacity"),
-			ScalingAdjustment:    pulumi.Int(1),
-			PolicyType:           pulumi.String("SimpleScaling"),
-			AutoscalingGroupName: asgGroup.Name,
-		})
-		if err != nil {
-			return err
-		}
-
-		//Create scale down policy
-		scaledownPolicy, err := autoscaling.NewPolicy(ctx, "scale-down-policy", &autoscaling.PolicyArgs{
-			AdjustmentType:       pulumi.String("ChangeInCapacity"),
-			ScalingAdjustment:    pulumi.Int(-1),
-			PolicyType:           pulumi.String("SimpleScaling"),
-			AutoscalingGroupName: asgGroup.Name,
-
 		})
 		if err != nil {
 			return err
