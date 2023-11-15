@@ -44,6 +44,7 @@ func main() {
 	userData = strings.Replace(userData, "${DB_PASSWORD}", "Password123", -1)
 
 	pulumi.Run(func(ctx *pulumi.Context) error {
+
 		c := config.New(ctx, "")
 		cidrBlock := c.Require("cidrBlock")
 		vpcName := c.Require("vpcName")
