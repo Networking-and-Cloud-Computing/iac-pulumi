@@ -1,11 +1,16 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"github.com/c-robinson/iplib"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws"
+	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/alb"
+	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/autoscaling"
+	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/cloudwatch"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/ec2"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/iam"
+	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/lb"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/rds"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/route53"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
@@ -23,6 +28,7 @@ func main() {
 		echo "spring.datasource.username=${DB_USER}"
 		echo "spring.datasource.password=${DB_PASSWORD}"
 		echo "spring.profiles.active=development"
+		echo "spring.datasource.hikari.connection-timeout=2000"
 		echo "logging.level.org.springframework.security=info"
 		echo "env.domain=localhost"
 	} >> /opt/application.properties
@@ -50,12 +56,17 @@ func main() {
 		publicRouteAssociationName := c.Require("publicRouteAssociationName")
 		privateRouteAssociationName := c.Require("privateRouteAssociationName")
 		instanceType := c.Require("instanceType")
+		appSecurityGroupName := c.Require("appSecurityGroupName")
 		domainName := c.Require("domain")
+		dbSecurityGroupName := c.Require("dbSecurityGroupName")
 		dbName := c.Require("dbName")
 		dbUserName := c.Require("dbUserName")
 		dbPassword := c.Require("dbPassword")
 		privateSubnetGroupName := c.Require("privateSubnetGroupName")
 		rdsInstanceName := c.Require("rdsInstanceName")
+		lbSecurityGroup := c.Require("lbSecurityGroup")
+		environment := c.Require("environment")
+		paramsName := c.Require("paramsName")
 		//publicSubnetID := c.Require("publicSubnetID")
 		amiID := c.Require("amiID")
 		availabilityZones, err := aws.GetAvailabilityZones(ctx, &aws.GetAvailabilityZonesArgs{
@@ -131,20 +142,19 @@ func main() {
 		for i := range publicSubnets {
 			publicsubnetIds = append(publicsubnetIds, publicSubnets[i].ID())
 		}
-		//Create an ec2 Security Group
-		securityGroup, err := ec2.NewSecurityGroup(ctx, "webSecurityGroup", &ec2.SecurityGroupArgs{
+
+		//Create an instance Security Group
+		webSecurityGroup, err := ec2.NewSecurityGroup(ctx, appSecurityGroupName, &ec2.SecurityGroupArgs{
 			Description: pulumi.String("Enable HTTP and SSH access"),
 			VpcId:       vpc.ID(),
 			Egress:      ec2.SecurityGroupEgressArray{egressArgs("0.0.0.0/0", "all")},
 			Ingress: ec2.SecurityGroupIngressArray{
 				ingressArgs("0.0.0.0/0", "tcp", 22),
-				ingressArgs("0.0.0.0/0", "tcp", 80),
-				ingressArgs("0.0.0.0/0", "tcp", 443),
 				// Add additional port number that your application runs on.
 				ingressArgs("0.0.0.0/0", "tcp", 8080),
 			},
 			Tags: pulumi.StringMap{
-				"Name": pulumi.String("application_security_group"),
+				"Name": pulumi.String(appSecurityGroupName),
 			},
 		})
 		if err != nil {
@@ -152,36 +162,40 @@ func main() {
 		}
 
 		//Create DB Security Group
-		databaseSecurityGroup, err := ec2.NewSecurityGroup(ctx, "dbSecurityGroup", &ec2.SecurityGroupArgs{
+		databaseSecurityGroup, err := ec2.NewSecurityGroup(ctx, dbSecurityGroupName, &ec2.SecurityGroupArgs{
 			Description: pulumi.String("Enable Database Access"),
 			VpcId:       vpc.ID(),
 			Ingress: ec2.SecurityGroupIngressArray{&ec2.SecurityGroupIngressArgs{
-
 				Protocol:       pulumi.String("tcp"),
 				FromPort:       pulumi.Int(5432),
 				ToPort:         pulumi.Int(5432),
-				SecurityGroups: pulumi.StringArray{securityGroup.ID()},
+				SecurityGroups: pulumi.StringArray{webSecurityGroup.ID()},
 			}},
+			Tags: pulumi.StringMap{
+				"Name": pulumi.String(dbSecurityGroupName),
+			},
 		})
 		if err != nil {
 			return err
 		}
+
+		//Security Group Egress Rule
 		_, err = ec2.NewSecurityGroupRule(ctx, "application-security-group-egress-rule", &ec2.SecurityGroupRuleArgs{
 			FromPort:              pulumi.Int(5432),
 			ToPort:                pulumi.Int(5432),
 			Protocol:              pulumi.String("tcp"),
 			Type:                  pulumi.String("egress"),
 			SourceSecurityGroupId: databaseSecurityGroup.ID(),
-			SecurityGroupId:       securityGroup.ID(),
+			SecurityGroupId:       webSecurityGroup.ID(),
 		})
 		if err != nil {
 			return err
 		}
 		//Create a parameter Group
-		parameterGroup, err := rds.NewParameterGroup(ctx, "why-gawdd-why", &rds.ParameterGroupArgs{
+		parameterGroup, err := rds.NewParameterGroup(ctx, paramsName, &rds.ParameterGroupArgs{
 			Description: pulumi.String("Custom Parameter Group"),
 			Family:      pulumi.String("postgres12"),
-			Name:        pulumi.String("why-gawdd-why"),
+			Name:        pulumi.String(paramsName),
 		})
 		if err != nil {
 			return err
@@ -202,7 +216,7 @@ func main() {
 			return err
 		}
 		// Create RDS Instance
-		//
+
 		rdsInstance, err := rds.NewInstance(ctx, rdsInstanceName, &rds.InstanceArgs{
 			AllocatedStorage:    pulumi.Int(20),
 			Engine:              pulumi.String("postgres"),
@@ -225,7 +239,7 @@ func main() {
 			return err
 		}
 
-		// Create a Internet gateway
+		// Create an Internet gateway
 		internetGateway, err := ec2.NewInternetGateway(ctx, internetGatewayName, &ec2.InternetGatewayArgs{
 			VpcId: vpc.ID(),
 			Tags: pulumi.StringMap{
@@ -340,27 +354,217 @@ func main() {
 			return err
 		}
 
-		instance, err := ec2.NewInstance(ctx, "HelloWorld-1", &ec2.InstanceArgs{
+		//instance, err := ec2.NewInstance(ctx, "HelloWorld", &ec2.InstanceArgs{
+		//	InstanceType:          pulumi.String(instanceType),
+		//	SubnetId:              publicsubnetIds[0],
+		//	VpcSecurityGroupIds:   pulumi.StringArray{webSecurityGroup.ID()},
+		//	Ami:                   pulumi.String(amiID),
+		//	KeyName:               pulumi.String("Cloud"),
+		//	DisableApiTermination: pulumi.Bool(false),
+		//	UserData: rdsInstance.Endpoint.ApplyT(
+		//		func(args interface{}) (string, error) {
+		//			endpoint := args.(string)
+		//			userData = strings.Replace(userData, "${HOST}", endpoint, -1)
+		//			return userData, nil
+		//		},
+		//	).(pulumi.StringOutput),
+		//	IamInstanceProfile: instanceProfile.ID(),
+		//	RootBlockDevice: &ec2.InstanceRootBlockDeviceArgs{
+		//		VolumeSize: pulumi.Int(25),
+		//		VolumeType: pulumi.String("gp2"),
+		//	},
+		//	Tags: pulumi.StringMap{
+		//		"Name": pulumi.String("RDSCHECK-TO-DIE"),
+		//	},
+		//})
+		//if err != nil {
+		//	return err
+		//}
+
+		//Create a security group Rule for load balancer
+		lbSecGroup, err := ec2.NewSecurityGroup(ctx, lbSecurityGroup, &ec2.SecurityGroupArgs{
+			Description: pulumi.String("Load balancer security group"),
+			Ingress: ec2.SecurityGroupIngressArray{
+				ingressArgs("0.0.0.0/0", "tcp", 80),
+				// Add additional port number that your application runs on.
+				ingressArgs("0.0.0.0/0", "tcp", 443),
+			},
+			VpcId: vpc.ID(),
+			// Allow all outbound traffic
+			Egress: ec2.SecurityGroupEgressArray{
+				ec2.SecurityGroupEgressArgs{
+					Protocol:   pulumi.String("-1"), // All protocols
+					FromPort:   pulumi.Int(0),
+					ToPort:     pulumi.Int(0),
+					CidrBlocks: pulumi.StringArray{pulumi.String("0.0.0.0/0")},
+				},
+			},
+			Tags: pulumi.StringMap{
+				"Name": pulumi.String(lbSecurityGroup),
+			},
+		})
+		if err != nil {
+			return err
+		}
+		// Add an ingress rule to the security group to allow traffic from the load balancer
+		_, err = ec2.NewSecurityGroupRule(ctx, "elb_traffic", &ec2.SecurityGroupRuleArgs{
+			Type:                  pulumi.String("ingress"),
+			FromPort:              pulumi.Int(80),
+			ToPort:                pulumi.Int(80),
+			Protocol:              pulumi.String("tcp"),
+			SecurityGroupId:       webSecurityGroup.ID(),
+			SourceSecurityGroupId: lbSecGroup.ID(),
+		})
+
+		//Create a Launch Template
+		launchTemplate, err := ec2.NewLaunchTemplate(ctx, "launchTemplate", &ec2.LaunchTemplateArgs{
+			ImageId:               pulumi.String(amiID),
 			InstanceType:          pulumi.String(instanceType),
-			SubnetId:              publicsubnetIds[0],
-			VpcSecurityGroupIds:   pulumi.StringArray{securityGroup.ID()},
-			Ami:                   pulumi.String(amiID),
 			KeyName:               pulumi.String("Cloud"),
 			DisableApiTermination: pulumi.Bool(false),
+			//NetworkInterfaces: ec2.LaunchTemplateNetworkInterfaceArray{
+			//	&ec2.LaunchTemplateNetworkInterfaceArgs{
+			//		AssociatePublicIpAddress: pulumi.String("true"),
+			//		SecurityGroups:           pulumi.StringArray{webSecurityGroup.ID()},
+			//	},
+			//},
+			VpcSecurityGroupIds: pulumi.StringArray{webSecurityGroup.ID()},
+			IamInstanceProfile: &ec2.LaunchTemplateIamInstanceProfileArgs{
+				Name: instanceProfile.Name,
+			},
+			//VpcSecurityGroupIds: pulumi.StringArray{webSecurityGroup.ID()},
 			UserData: rdsInstance.Endpoint.ApplyT(
 				func(args interface{}) (string, error) {
 					endpoint := args.(string)
 					userData = strings.Replace(userData, "${HOST}", endpoint, -1)
-					return userData, nil
+					encodedUserData := base64.StdEncoding.EncodeToString([]byte(userData))
+					return encodedUserData, nil
 				},
 			).(pulumi.StringOutput),
-			IamInstanceProfile: instanceProfile.ID(),
-			RootBlockDevice: &ec2.InstanceRootBlockDeviceArgs{
-				VolumeSize: pulumi.Int(25),
-				VolumeType: pulumi.String("gp2"),
+		},
+		)
+		if err != nil {
+			return err
+		}
+		// Create a Target Group
+		tg, err := alb.NewTargetGroup(ctx, "tg", &alb.TargetGroupArgs{
+			Port:       pulumi.Int(8080),
+			Protocol:   pulumi.String("HTTP"),
+			TargetType: pulumi.String("instance"),
+			VpcId:      vpc.ID(),
+			HealthCheck: &alb.TargetGroupHealthCheckArgs{
+				Enabled:  pulumi.Bool(true),
+				Interval: pulumi.Int(60),
+				Path:     pulumi.String("/healthz"),
+				Port:     pulumi.String(strconv.Itoa(8080)),
+				Protocol: pulumi.String("HTTP"),
+				Timeout:  pulumi.Int(5),
 			},
+		})
+		if err != nil {
+			return err
+		}
+
+		// Create an Autoscaling Group
+		asgGroup, err := autoscaling.NewGroup(ctx, "Auto-Scaling-Group", &autoscaling.GroupArgs{
+
+			MinSize:                pulumi.Int(1),
+			MaxSize:                pulumi.Int(3),
+			DesiredCapacity:        pulumi.Int(1),
+			DefaultCooldown:        pulumi.Int(60),
+			HealthCheckType:        pulumi.String("ELB"),
+			HealthCheckGracePeriod: pulumi.Int(300),
+			LaunchTemplate: &autoscaling.GroupLaunchTemplateArgs{
+				Id: launchTemplate.ID(),
+			},
+			VpcZoneIdentifiers: pulumi.StringArray{subnetIds[0]},
+			TargetGroupArns:    pulumi.StringArray{tg.Arn},
+		})
+		if err != nil {
+			return err
+		}
+		// Create scale up policy
+		scaleupPolicy, err := autoscaling.NewPolicy(ctx, "scale-up-policy", &autoscaling.PolicyArgs{
+			AdjustmentType:       pulumi.String("ChangeInCapacity"),
+			ScalingAdjustment:    pulumi.Int(1),
+			PolicyType:           pulumi.String("SimpleScaling"),
+			AutoscalingGroupName: asgGroup.Name,
+		})
+		if err != nil {
+			return err
+		}
+
+		//Create scale down policy
+		scaledownPolicy, err := autoscaling.NewPolicy(ctx, "scale-down-policy", &autoscaling.PolicyArgs{
+			AdjustmentType:       pulumi.String("ChangeInCapacity"),
+			ScalingAdjustment:    pulumi.Int(-1),
+			PolicyType:           pulumi.String("SimpleScaling"),
+			AutoscalingGroupName: asgGroup.Name,
+		})
+		if err != nil {
+			return err
+		}
+
+		// Create a CloudWatch Alarm
+		_, err = cloudwatch.NewMetricAlarm(ctx, "AS-Alram", &cloudwatch.MetricAlarmArgs{
+			AlarmDescription:   pulumi.String("Request for the AutoScaling Alarm"),
+			EvaluationPeriods:  pulumi.Int(2),
+			MetricName:         pulumi.String("CPUUtilization"),
+			Namespace:          pulumi.String("AWS/EC2"),
+			Period:             pulumi.Int(120),
+			Statistic:          pulumi.String("Average"),
+			Threshold:          pulumi.Float64(5),
+			ComparisonOperator: pulumi.String("GreaterThanOrEqualToThreshold"),
+			Dimensions: pulumi.StringMap{
+				"AutoScalingGroupName": asgGroup.Name,
+			},
+			AlarmActions: pulumi.Array{
+				scaledownPolicy.Arn,
+				scaleupPolicy.Arn,
+			},
+		})
+		if err != nil {
+			return err
+		}
+
+		//Create a Load Balancer
+		lb, err := lb.NewLoadBalancer(ctx, "LoadBalancer", &lb.LoadBalancerArgs{
+			Internal:                 pulumi.Bool(false),
+			LoadBalancerType:         pulumi.String("application"),
+			Subnets:                  pulumi.StringArray{publicsubnetIds[0], publicsubnetIds[1]},
+			SecurityGroups:           pulumi.StringArray{lbSecGroup.ID()},
+			EnableDeletionProtection: pulumi.Bool(false),
 			Tags: pulumi.StringMap{
-				"Name": pulumi.String("PHOENIX"),
+				"Environment": pulumi.String(environment),
+			},
+		})
+		if err != nil {
+			return err
+		}
+		//Create a Load Balancer Listener
+		_, err = alb.NewListener(ctx, "Listener", &alb.ListenerArgs{
+			DefaultActions: alb.ListenerDefaultActionArray{
+				&alb.ListenerDefaultActionArgs{
+					Type:           pulumi.String("forward"),
+					TargetGroupArn: tg.Arn,
+				},
+			},
+			LoadBalancerArn: lb.Arn,
+			Port:            pulumi.Int(80),
+			Protocol:        pulumi.String("HTTP"),
+		})
+		// Create a new A Record
+		_, err = route53.NewRecord(ctx, "A-RECORD", &route53.RecordArgs{
+			Name:   pulumi.String(domainName),
+			Type:   pulumi.String("A"),
+			ZoneId: pulumi.String(zoneID.Id),
+			//Records: pulumi.StringArray{lb.Name},
+			Aliases: route53.RecordAliasArray{
+				&route53.RecordAliasArgs{
+					EvaluateTargetHealth: pulumi.Bool(true),
+					Name:                 lb.DnsName,
+					ZoneId:               lb.ZoneId,
+				},
 			},
 		})
 		if err != nil {
