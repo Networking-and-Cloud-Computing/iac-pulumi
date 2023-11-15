@@ -520,6 +520,7 @@ func main() {
 			AlarmActions: pulumi.Array{
 				scaleupPolicy.Arn,
 			},
+			},
 		})
 		if err != nil {
 			return err
@@ -570,6 +571,10 @@ func main() {
 			Port:            pulumi.Int(80),
 			Protocol:        pulumi.String("HTTP"),
 		})
+		if err != nil {
+			return err
+		}
+
 		// Create a new A Record
 		_, err = route53.NewRecord(ctx, "A-RECORD", &route53.RecordArgs{
 			Name:   pulumi.String(domainName),
@@ -583,6 +588,48 @@ func main() {
 					ZoneId:               lb.ZoneId,
 				},
 			},
+		})
+		if err != nil {
+			return err
+		}
+
+		////Create a Load Balancer
+		//lb, err := elb.NewLoadBalancer(ctx, "LoadBalancer", &elb.LoadBalancerArgs{
+		//	//AvailabilityZones: pulumi.StringArray{
+		//	//	pulumi.String("us-east-1a"),
+		//	//},
+		//	Listeners: elb.LoadBalancerListenerArray{
+		//		&elb.LoadBalancerListenerArgs{
+		//			InstancePort:     pulumi.Int(80),
+		//			InstanceProtocol: pulumi.String("http"),
+		//			LbPort:           pulumi.Int(80),
+		//			LbProtocol:       pulumi.String("http"),
+		//		},
+		//	},
+		//	Subnets:   pulumi.StringArray{publicsubnetIds[0]},
+		//	Instances: pulumi.StringArray{instance.ID()},
+		//})
+		//if err != nil {
+		//	return err
+		//}
+
+		// Create a new A Record
+		_, err = route53.NewRecord(ctx, "A-RECORD", &route53.RecordArgs{
+			Name:    pulumi.String(domainName),
+			Type:    pulumi.String("A"),
+			Ttl:     pulumi.Int(60),
+			ZoneId:  pulumi.String(zoneID.Id),
+			Records: pulumi.StringArray{instance.PublicIp},
+			//Aliases: route53.RecordAliasArray{
+			//	&route53.RecordAliasArgs{
+			//		EvaluateTargetHealth: pulumi.Bool(true),
+			//		Name:                 instance.PublicDns,
+			//		ZoneId:               instance.ZoneId,
+			//		//.ToStringOutput().ApplyT(func(zoneId string) pulumi.StringInput {
+			//		//		return pulumi.String(zoneId)
+			//		//	}).(pulumi.StringInput),
+			//	},
+			//},
 		})
 		if err != nil {
 			return err
