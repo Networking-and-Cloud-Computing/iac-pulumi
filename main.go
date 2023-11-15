@@ -149,11 +149,9 @@ func main() {
 			Description: pulumi.String("Enable HTTP and SSH access"),
 			VpcId:       vpc.ID(),
 			Egress:      ec2.SecurityGroupEgressArray{egressArgs("0.0.0.0/0", "all")},
-			Ingress: ec2.SecurityGroupIngressArray{
-				ingressArgs("0.0.0.0/0", "tcp", 22),
-				// Add additional port number that your application runs on.
-				ingressArgs("0.0.0.0/0", "tcp", 8080),
-			},
+			//Ingress: ec2.SecurityGroupIngressArray{
+			//	ingressArgs("0.0.0.0/0", "tcp", 22),
+			//},
 			Tags: pulumi.StringMap{
 				"Name": pulumi.String(appSecurityGroupName),
 			},
@@ -409,8 +407,17 @@ func main() {
 		// Add an ingress rule to the security group to allow traffic from the load balancer
 		_, err = ec2.NewSecurityGroupRule(ctx, "elb_traffic", &ec2.SecurityGroupRuleArgs{
 			Type:                  pulumi.String("ingress"),
-			FromPort:              pulumi.Int(80),
-			ToPort:                pulumi.Int(80),
+			FromPort:              pulumi.Int(8080),
+			ToPort:                pulumi.Int(8080),
+			Protocol:              pulumi.String("tcp"),
+			SecurityGroupId:       webSecurityGroup.ID(),
+			SourceSecurityGroupId: lbSecGroup.ID(),
+		})
+		// Add an ingress rule to the security group to allow traffic from the load balancer
+		_, err = ec2.NewSecurityGroupRule(ctx, "elb_traffic_22", &ec2.SecurityGroupRuleArgs{
+			Type:                  pulumi.String("ingress"),
+			FromPort:              pulumi.Int(22),
+			ToPort:                pulumi.Int(22),
 			Protocol:              pulumi.String("tcp"),
 			SecurityGroupId:       webSecurityGroup.ID(),
 			SourceSecurityGroupId: lbSecGroup.ID(),
@@ -511,7 +518,7 @@ func main() {
 			EvaluationPeriods:  pulumi.Int(2),
 			MetricName:         pulumi.String("CPUUtilization"),
 			Namespace:          pulumi.String("AWS/EC2"),
-			Period:             pulumi.Int(120),
+			Period:             pulumi.Int(60),
 			Statistic:          pulumi.String("Average"),
 			Threshold:          pulumi.Float64(5),
 			ComparisonOperator: pulumi.String("GreaterThanOrEqualToThreshold"),
@@ -531,7 +538,7 @@ func main() {
 			EvaluationPeriods:  pulumi.Int(2),
 			MetricName:         pulumi.String("CPUUtilization"),
 			Namespace:          pulumi.String("AWS/EC2"),
-			Period:             pulumi.Int(120),
+			Period:             pulumi.Int(60),
 			Statistic:          pulumi.String("Average"),
 			Threshold:          pulumi.Float64(3),
 			ComparisonOperator: pulumi.String("LessThanOrEqualToThreshold"),
@@ -545,6 +552,7 @@ func main() {
 		if err != nil {
 			return err
 		}
+
 		//Create a Load Balancer
 		lb, err := lb.NewLoadBalancer(ctx, "LoadBalancer", &lb.LoadBalancerArgs{
 			Internal:                 pulumi.Bool(false),
