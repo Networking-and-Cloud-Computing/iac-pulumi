@@ -505,7 +505,7 @@ func main() {
 		}
 
 		// Create a CloudWatch Alarm
-		_, err = cloudwatch.NewMetricAlarm(ctx, "AS-Alram", &cloudwatch.MetricAlarmArgs{
+		_, err = cloudwatch.NewMetricAlarm(ctx, "AS-Alarm-scale-up", &cloudwatch.MetricAlarmArgs{
 			AlarmDescription:   pulumi.String("Request for the AutoScaling Alarm"),
 			EvaluationPeriods:  pulumi.Int(2),
 			MetricName:         pulumi.String("CPUUtilization"),
@@ -518,14 +518,32 @@ func main() {
 				"AutoScalingGroupName": asgGroup.Name,
 			},
 			AlarmActions: pulumi.Array{
-				scaledownPolicy.Arn,
 				scaleupPolicy.Arn,
 			},
 		})
 		if err != nil {
 			return err
 		}
-
+		// Create a CloudWatch Alarm
+		_, err = cloudwatch.NewMetricAlarm(ctx, "AS-Alarm-scale-down", &cloudwatch.MetricAlarmArgs{
+			AlarmDescription:   pulumi.String("Request for the AutoScaling Alarm"),
+			EvaluationPeriods:  pulumi.Int(2),
+			MetricName:         pulumi.String("CPUUtilization"),
+			Namespace:          pulumi.String("AWS/EC2"),
+			Period:             pulumi.Int(120),
+			Statistic:          pulumi.String("Average"),
+			Threshold:          pulumi.Float64(3),
+			ComparisonOperator: pulumi.String("LessThanOrEqualToThreshold"),
+			Dimensions: pulumi.StringMap{
+				"AutoScalingGroupName": asgGroup.Name,
+			},
+			AlarmActions: pulumi.Array{
+				scaledownPolicy.Arn,
+			},
+		})
+		if err != nil {
+			return err
+		}
 		//Create a Load Balancer
 		lb, err := lb.NewLoadBalancer(ctx, "LoadBalancer", &lb.LoadBalancerArgs{
 			Internal:                 pulumi.Bool(false),
