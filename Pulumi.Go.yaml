@@ -2,6 +2,7 @@ config:
   aws:profile: demo
   aws:region: us-east-1
   vpcName: "my-vpc"
+  path: "/Users/cjoshi/Desktop/Serverless/deployment-package.zip"
   cidrBlock: 10.0.0.0/16
   destinationBlock: 0.0.0.0/0
   publicSubnetName : "public-subnet-"
@@ -12,7 +13,7 @@ config:
   publicRouteAssociationName : "public-RTA-"
   privateRouteAssociationName : "private-RTA-"
   instanceType : "t2.micro"
-  amiID : "ami-0a8ba6b7794bde783"
+  amiID : "ami-0a1853562dc7f084c"
   dbName : "Joshi"
   dbUserName : "cjoshi"
   dbPassword : "Password123"
@@ -24,4 +25,5 @@ config:
   domain: "demo.cjoshi.tech"
   lbSecurityGroup: "load-weights"
   environment: "demo"
+
   

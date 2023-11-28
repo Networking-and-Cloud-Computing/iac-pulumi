@@ -8,11 +8,14 @@ import (
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/alb"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/autoscaling"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/cloudwatch"
+	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/dynamodb"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/ec2"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/iam"
+	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/lambda"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/lb"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/rds"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/route53"
+	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/sns"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi/config"
 	"net"
@@ -68,6 +71,7 @@ func main() {
 		lbSecurityGroup := c.Require("lbSecurityGroup")
 		environment := c.Require("environment")
 		paramsName := c.Require("paramsName")
+		path := c.Require("path")
 		//publicSubnetID := c.Require("publicSubnetID")
 		amiID := c.Require("amiID")
 		availabilityZones, err := aws.GetAvailabilityZones(ctx, &aws.GetAvailabilityZonesArgs{
@@ -417,7 +421,7 @@ func main() {
 		})
 
 		//Create a Launch Template
-		launchTemplate, err := ec2.NewLaunchTemplate(ctx, "launchTemplate", &ec2.LaunchTemplateArgs{
+		launchTemplate, err := ec2.NewLaunchTemplate(ctx, "launch-again-take-2", &ec2.LaunchTemplateArgs{
 			ImageId:               pulumi.String(amiID),
 			InstanceType:          pulumi.String(instanceType),
 			KeyName:               pulumi.String("Cloud"),
@@ -559,6 +563,7 @@ func main() {
 		if err != nil {
 			return err
 		}
+
 		//Create a Load Balancer Listener
 		_, err = alb.NewListener(ctx, "Listener", &alb.ListenerArgs{
 			DefaultActions: alb.ListenerDefaultActionArray{
@@ -571,6 +576,7 @@ func main() {
 			Port:            pulumi.Int(80),
 			Protocol:        pulumi.String("HTTP"),
 		})
+
 		// Create a new A Record
 		_, err = route53.NewRecord(ctx, "A-RECORD", &route53.RecordArgs{
 			Name:   pulumi.String(domainName),
@@ -589,6 +595,99 @@ func main() {
 			return err
 		}
 
+		// Create a SNS Topic
+		topic, err := sns.NewTopic(ctx, "userUpdates", &sns.TopicArgs{
+			DeliveryPolicy: pulumi.String(`{
+    		"http": {
+    		"defaultHealthyRetryPolicy": {
+      		"minDelayTarget": 20,
+      		"maxDelayTarget": 20,
+      		"numRetries": 3,
+      		"numMaxDelayRetries": 0,
+      		"numNoDelayRetries": 0,
+      		"numMinDelayRetries": 0,
+      		"backoffFunction": "linear"
+    		},
+    		"disableSubscriptionOverrides": false,
+    		"defaultThrottlePolicy": {
+      		"maxReceivesPerSecond": 1
+    		}
+  		}
+	}`),
+		})
+		if err != nil {
+			return err
+		}
+		// Create a DynamoDB Table
+		table, err := dynamodb.NewTable(ctx, "Table", &dynamodb.TableArgs{
+			Attributes: dynamodb.TableAttributeArray{
+				&dynamodb.TableAttributeArgs{
+					Name: pulumi.String("Id"),
+					Type: pulumi.String("S"),
+				},
+			},
+			HashKey:       pulumi.String("Id"),
+			ReadCapacity:  pulumi.Int(5),
+			WriteCapacity: pulumi.Int(5),
+		})
+		if err != nil {
+			return err
+		}
+		// Create a Google Cloud Storage Bucket
+		//bucket, err := storage.NewBucket(ctx, "chandana_Bucket", nil)
+		//if err != nil {
+		//	return err
+		//}
+		lambdaRole, err := iam.NewRole(ctx, "lambdaRole", &iam.RoleArgs{
+			AssumeRolePolicy: pulumi.String(`{
+				"Version": "2012-10-17",
+				"Statement": [
+					{
+					"Action": "sts:AssumeRole",
+					"Principal": {
+						"Service": "lambda.amazonaws.com"
+					},
+					"Effect": "Allow",
+					"Sid": ""
+					}
+				]
+				}`),
+		})
+		if err != nil {
+			return err
+		}
+
+		// Create a new Lambda Role Policy Attachment
+		_, err = iam.NewRolePolicyAttachment(ctx, "lambdaRolePolicyAttachment", &iam.RolePolicyAttachmentArgs{
+			Role:      lambdaRole.Name,
+			PolicyArn: pulumi.String("arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"),
+		})
+		if err != nil {
+			return err
+		}
+
+		// Create a new Lambda Function
+		function, err := lambda.NewFunction(ctx, "Lambda_Function", &lambda.FunctionArgs{
+			Code:    pulumi.NewFileArchive(path),
+			Handler: pulumi.String("Handler.lambda_handler"),
+			Runtime: pulumi.String("python3.8"),
+			Role:    lambdaRole.Arn,
+			Environment: &lambda.FunctionEnvironmentArgs{
+				Variables: pulumi.StringMap{
+					//"GCS_BUCKET_NAME":     bucket.Name,
+					"DYNAMODB_TABLE_NAME": table.Name,
+				},
+			},
+		})
+		// SNS Topic Subscription
+		_, err = sns.NewTopicSubscription(ctx, "lambdaSubscription", &sns.TopicSubscriptionArgs{
+			Topic:    topic.Arn,
+			Protocol: pulumi.String("lambda"),
+			Endpoint: function.Arn,
+		})
+		if err != nil {
+			return err
+		}
 		return err
 	})
 }
