@@ -16,6 +16,8 @@ import (
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/rds"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/route53"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/sns"
+	"github.com/pulumi/pulumi-gcp/sdk/v6/go/gcp/serviceaccount"
+	"github.com/pulumi/pulumi-gcp/sdk/v6/go/gcp/storage"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi/config"
 	"net"
@@ -34,6 +36,10 @@ func main() {
 		echo "spring.datasource.hikari.connection-timeout=2000"
 		echo "logging.level.org.springframework.security=info"
 		echo "env.domain=localhost"
+		echo "AWS_ACCESS_KEY_ID=AKIA46JJ7APOLFBEE2BC"
+		echo "AWS_SECRET_ACCESS_KEY=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"
+		echo "SUBMISSION_TOPIC_ARN=${SUBMISSION_TOPIC_ARN}"
+
 	} >> /opt/application.properties
 	{
 		sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
@@ -350,6 +356,14 @@ func main() {
 			return err
 		}
 		// Attach the new Role
+		_, err = iam.NewRolePolicyAttachment(ctx, "myRolePolicyAttachment-SNS", &iam.RolePolicyAttachmentArgs{
+			Role:      role.Name,
+			PolicyArn: pulumi.String("arn:aws:iam::aws:policy/AmazonSNSFullAccess"),
+		})
+		if err != nil {
+			return err
+		}
+
 		_, err = iam.NewRolePolicyAttachment(ctx, "myRolePolicyAttachment", &iam.RolePolicyAttachmentArgs{
 			Role:      role.Name,
 			PolicyArn: pulumi.String("arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"),
@@ -633,11 +647,55 @@ func main() {
 		if err != nil {
 			return err
 		}
-		// Create a Google Cloud Storage Bucket
-		//bucket, err := storage.NewBucket(ctx, "chandana_Bucket", nil)
-		//if err != nil {
-		//	return err
-		//}
+
+		if err != nil {
+			return err
+		}
+
+		topic.Arn.ApplyT(
+			func(args interface{}) (string, error) {
+				arn := args.(string)
+				userData = strings.Replace(userData, "${SUBMISSION_TOPIC_ARN}", arn, -1)
+				return arn, nil
+			})
+		//Create a Google Cloud Storage Bucket
+		bucket, err := storage.NewBucket(ctx, "chandana_Bucket", &storage.BucketArgs{
+			Location:               pulumi.String("US"),
+			Name:                   pulumi.String("chandana-bucket"),
+			Project:                pulumi.String("development-406400"),
+			StorageClass:           pulumi.String("STANDARD"),
+			PublicAccessPrevention: pulumi.String("enforced"),
+			ForceDestroy:           pulumi.Bool(true),
+		})
+		if err != nil {
+			return err
+		}
+
+		//Create a Service Account for Bucket
+		serviceAccount, err := serviceaccount.NewAccount(ctx, "My-Account", &serviceaccount.AccountArgs{
+
+			AccountId:   pulumi.String("service-account-id"),
+			DisplayName: pulumi.String("My-Account"),
+			Project:     pulumi.String("development-406400"),
+		})
+		if err != nil {
+			return err
+		}
+
+		_, err = storage.NewBucketIAMMember(ctx, "bucketIAMMember", &storage.BucketIAMMemberArgs{
+			Bucket: bucket.Name,
+			Role:   pulumi.String("roles/storage.admin"),
+			Member: serviceAccount.Member,
+		})
+		if err != nil {
+			return err
+		}
+		//Create Access Keys
+		AccessKey, err := serviceaccount.NewKey(ctx, "My-Key", &serviceaccount.KeyArgs{
+			ServiceAccountId: serviceAccount.Name,
+			PublicKeyType:    pulumi.String("TYPE_RAW_PUBLIC_KEY"),
+		})
+		//Create a Role for Lambda
 		lambdaRole, err := iam.NewRole(ctx, "lambdaRole", &iam.RoleArgs{
 			AssumeRolePolicy: pulumi.String(`{
 				"Version": "2012-10-17",
@@ -665,20 +723,40 @@ func main() {
 		if err != nil {
 			return err
 		}
+		_, err = iam.NewRolePolicyAttachment(ctx, "lambdaRolePolicyAttachment-Dynamo", &iam.RolePolicyAttachmentArgs{
+			Role:      lambdaRole.Name,
+			PolicyArn: pulumi.String("arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"),
+		})
+		if err != nil {
+			return err
+		}
 
 		// Create a new Lambda Function
 		function, err := lambda.NewFunction(ctx, "Lambda_Function", &lambda.FunctionArgs{
 			Code:    pulumi.NewFileArchive(path),
 			Handler: pulumi.String("Handler.lambda_handler"),
-			Runtime: pulumi.String("python3.8"),
+			Runtime: pulumi.String("python3.11"),
 			Role:    lambdaRole.Arn,
+			Timeout: pulumi.IntPtr(10),
 			Environment: &lambda.FunctionEnvironmentArgs{
 				Variables: pulumi.StringMap{
-					//"GCS_BUCKET_NAME":     bucket.Name,
+					"GCP_BUCKET_NAME":     bucket.Name,
 					"DYNAMODB_TABLE_NAME": table.Name,
+					"GOOGLE_CREDENTIALS":  AccessKey.PrivateKey,
 				},
 			},
 		})
+
+		// Create a Trigger to lambda from SNS
+		_, err = lambda.NewPermission(ctx, "lambda_permission", &lambda.PermissionArgs{
+			Action:    pulumi.String("lambda:InvokeFunction"),
+			Function:  function.Name, // replace `lambda_function` with your Lambda Function resource
+			Principal: pulumi.String("sns.amazonaws.com"),
+			SourceArn: topic.Arn, // replace `sns_topic` with your SNS Topic resource
+		})
+		if err != nil {
+			return err
+		}
 		// SNS Topic Subscription
 		_, err = sns.NewTopicSubscription(ctx, "lambdaSubscription", &sns.TopicSubscriptionArgs{
 			Topic:    topic.Arn,
@@ -690,6 +768,7 @@ func main() {
 		}
 		return err
 	})
+
 }
 
 func ingressArgs(cidr, protocol string, fromPort int) ec2.SecurityGroupIngressInput {
