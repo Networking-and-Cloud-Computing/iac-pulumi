@@ -1,29 +1,28 @@
 config:
   aws:profile: demo
   aws:region: us-east-1
-  vpcName: "my-vpc"
-  path: "/Users/cjoshi/Desktop/Serverless/deployment-package.zip"
-  cidrBlock: 10.0.0.0/16
-  destinationBlock: 0.0.0.0/0
-  publicSubnetName : "public-subnet-"
-  privateSubnetName: "private-subnet-"
-  internetGatewayName : "Internet-Gateway"
-  publicRouteTableName : "Public-Route-Table"
-  privateRouteTableName: "Private-Route-Table"
-  publicRouteAssociationName : "public-RTA-"
-  privateRouteAssociationName : "private-RTA-"
-  instanceType : "t2.micro"
-  amiID : "ami-0a1853562dc7f084c"
-  dbName : "Joshi"
-  dbUserName : "cjoshi"
-  dbPassword : "Password123"
-  paramsName : "why-gawdd-why"
-  privateSubnetGroupName : "alive"
-  rdsInstanceName : "please-work"
-  dbSecurityGroupName : "dbSecurityGroup"
-  appSecurityGroupName : "webSecurityGroup"
-  domain: "demo.cjoshi.tech"
-  lbSecurityGroup: "load-weights"
-  environment: "demo"
-
-  
+  gcp:project: development
+  iac-pulumi:amiID: ami-09ca72014fdc18fd9
+  iac-pulumi:appSecurityGroupName: webSecurityGroup
+  iac-pulumi:cidrBlock: 10.0.0.0/16
+  iac-pulumi:dbName: Joshi
+  iac-pulumi:dbPassword: Password123
+  iac-pulumi:dbSecurityGroupName: dbSecurityGroup
+  iac-pulumi:dbUserName: cjoshi
+  iac-pulumi:destinationBlock: 0.0.0.0/0
+  iac-pulumi:domain: demo.cjoshi.tech
+  iac-pulumi:environment: demo
+  iac-pulumi:instanceType: t2.micro
+  iac-pulumi:internetGatewayName: Internet-Gateway
+  iac-pulumi:lbSecurityGroup: load-weights
+  iac-pulumi:paramsName: why-gawdd-why
+  iac-pulumi:path: /Users/cjoshi/Desktop/Serverless/deployment-package.zip
+  iac-pulumi:privateRouteAssociationName: private-RTA-
+  iac-pulumi:privateRouteTableName: Private-Route-Table
+  iac-pulumi:privateSubnetGroupName: alive
+  iac-pulumi:privateSubnetName: private-subnet-
+  iac-pulumi:publicRouteAssociationName: public-RTA-
+  iac-pulumi:publicRouteTableName: Public-Route-Table
+  iac-pulumi:publicSubnetName: public-subnet-
+  iac-pulumi:rdsInstanceName: please-work
+  iac-pulumi:vpcName: my-vpc
