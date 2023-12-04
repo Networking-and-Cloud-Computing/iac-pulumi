@@ -2,7 +2,7 @@ config:
   aws:profile: demo
   aws:region: us-east-1
   gcp:project: development
-  iac-pulumi:amiID: ami-09ca72014fdc18fd9
+  iac-pulumi:amiID: ami-096cb009bbe6f2cfb
   iac-pulumi:appSecurityGroupName: webSecurityGroup
   iac-pulumi:cidrBlock: 10.0.0.0/16
   iac-pulumi:dbName: Joshi
