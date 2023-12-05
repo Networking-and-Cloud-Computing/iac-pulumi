@@ -77,6 +77,12 @@ func main() {
 		environment := c.Require("environment")
 		paramsName := c.Require("paramsName")
 		path := c.Require("path")
+		autoscalingName := c.Require("autoscalingName")
+		LaunchTemplateName := c.Require("LaunchTemplateName")
+		BucketName := c.Require("BucketName")
+		GCPProjectName := c.Require("GCPProjectName")
+		ServiceAccount := c.Require("ServiceAccount")
+		GCPKeyName := c.Require("GCPKeyName")
 		//publicSubnetID := c.Require("publicSubnetID")
 		amiID := c.Require("amiID")
 		availabilityZones, err := aws.GetAvailabilityZones(ctx, &aws.GetAvailabilityZonesArgs{
@@ -465,8 +471,8 @@ func main() {
 			})
 
 		//Create a Launch Template
-		launchTemplate, err := ec2.NewLaunchTemplate(ctx, "launch-again-take-2", &ec2.LaunchTemplateArgs{
-			Name:                  pulumi.String("webapp-launch-template"),
+		launchTemplate, err := ec2.NewLaunchTemplate(ctx, LaunchTemplateName, &ec2.LaunchTemplateArgs{
+			Name:                  pulumi.String(LaunchTemplateName),
 			ImageId:               pulumi.String(amiID),
 			InstanceType:          pulumi.String(instanceType),
 			KeyName:               pulumi.String("Cloud"),
@@ -509,8 +515,8 @@ func main() {
 		}
 
 		// Create an Autoscaling Group
-		asgGroup, err := autoscaling.NewGroup(ctx, "Auto-Scaling-Group", &autoscaling.GroupArgs{
-			Name:                   pulumi.String("webapp-autoscaling-group"),
+		asgGroup, err := autoscaling.NewGroup(ctx, autoscalingName, &autoscaling.GroupArgs{
+			Name:                   pulumi.String(autoscalingName),
 			MinSize:                pulumi.Int(1),
 			MaxSize:                pulumi.Int(3),
 			DesiredCapacity:        pulumi.Int(1),
@@ -668,8 +674,8 @@ func main() {
 		//Create a Google Cloud Storage Bucket
 		bucket, err := storage.NewBucket(ctx, "chandana_Bucket", &storage.BucketArgs{
 			Location:               pulumi.String("US"),
-			Name:                   pulumi.String("chandana-bucket"),
-			Project:                pulumi.String("development-406400"),
+			Name:                   pulumi.String(BucketName),
+			Project:                pulumi.String(GCPProjectName),
 			StorageClass:           pulumi.String("STANDARD"),
 			PublicAccessPrevention: pulumi.String("enforced"),
 			ForceDestroy:           pulumi.Bool(true),
@@ -679,11 +685,11 @@ func main() {
 		}
 
 		//Create a Service Account for Bucket
-		serviceAccount, err := serviceaccount.NewAccount(ctx, "My-Account", &serviceaccount.AccountArgs{
+		serviceAccount, err := serviceaccount.NewAccount(ctx, ServiceAccount, &serviceaccount.AccountArgs{
 
 			AccountId:   pulumi.String("service-account-id"),
-			DisplayName: pulumi.String("My-Account"),
-			Project:     pulumi.String("development-406400"),
+			DisplayName: pulumi.String(ServiceAccount),
+			Project:     pulumi.String(GCPProjectName),
 		})
 		if err != nil {
 			return err
@@ -698,7 +704,7 @@ func main() {
 			return err
 		}
 		//Create Access Keys
-		AccessKey, err := serviceaccount.NewKey(ctx, "My-Key", &serviceaccount.KeyArgs{
+		AccessKey, err := serviceaccount.NewKey(ctx, GCPKeyName, &serviceaccount.KeyArgs{
 			ServiceAccountId: serviceAccount.Name,
 			PublicKeyType:    pulumi.String("TYPE_RAW_PUBLIC_KEY"),
 		})
@@ -757,9 +763,9 @@ func main() {
 		// Create a Trigger to lambda from SNS
 		_, err = lambda.NewPermission(ctx, "lambda_permission", &lambda.PermissionArgs{
 			Action:    pulumi.String("lambda:InvokeFunction"),
-			Function:  function.Name, // replace `lambda_function` with your Lambda Function resource
+			Function:  function.Name,
 			Principal: pulumi.String("sns.amazonaws.com"),
-			SourceArn: topic.Arn, // replace `sns_topic` with your SNS Topic resource
+			SourceArn: topic.Arn,
 		})
 		if err != nil {
 			return err
