@@ -1,8 +1,8 @@
 config:
   aws:profile: demo
   aws:region: us-east-1
-  gcp:project: development
-  iac-pulumi:amiID: ami-09ca72014fdc18fd9
+  gcp:project: Demo
+  iac-pulumi:amiID: ami-0878dd06a9a8301ca
   iac-pulumi:appSecurityGroupName: webSecurityGroup
   iac-pulumi:cidrBlock: 10.0.0.0/16
   iac-pulumi:dbName: Joshi
@@ -26,3 +26,10 @@ config:
   iac-pulumi:publicSubnetName: public-subnet-
   iac-pulumi:rdsInstanceName: please-work
   iac-pulumi:vpcName: my-vpc
+  iac-pulumi:autoscalingName : webapp-autoscaling-group
+  iac-pulumi:LaunchTemplateName : webapp-launch-template
+  iac-pulumi:BucketName : chandana-bucket-demo
+  iac-pulumi:ServiceAccount : My-Account
+  iac-pulumi:GCPKeyName : My-Key
+  iac-pulumi:GCPProjectName : resonant-goods-406400
+

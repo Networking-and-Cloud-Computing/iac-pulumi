@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"github.com/c-robinson/iplib"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws"
+	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/acm"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/alb"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/autoscaling"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/cloudwatch"
@@ -36,8 +37,6 @@ func main() {
 		echo "spring.datasource.hikari.connection-timeout=2000"
 		echo "logging.level.org.springframework.security=info"
 		echo "env.domain=localhost"
-		echo "AWS_ACCESS_KEY_ID=AKIA46JJ7APOLFBEE2BC"
-		echo "AWS_SECRET_ACCESS_KEY=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"
 		echo "SUBMISSION_TOPIC_ARN=${SUBMISSION_TOPIC_ARN}"
 
 	} >> /opt/application.properties
@@ -78,6 +77,12 @@ func main() {
 		environment := c.Require("environment")
 		paramsName := c.Require("paramsName")
 		path := c.Require("path")
+		autoscalingName := c.Require("autoscalingName")
+		LaunchTemplateName := c.Require("LaunchTemplateName")
+		BucketName := c.Require("BucketName")
+		GCPProjectName := c.Require("GCPProjectName")
+		ServiceAccount := c.Require("ServiceAccount")
+		GCPKeyName := c.Require("GCPKeyName")
 		//publicSubnetID := c.Require("publicSubnetID")
 		amiID := c.Require("amiID")
 		availabilityZones, err := aws.GetAvailabilityZones(ctx, &aws.GetAvailabilityZonesArgs{
@@ -434,23 +439,48 @@ func main() {
 			SourceSecurityGroupId: lbSecGroup.ID(),
 		})
 
+		// Create a SNS Topic
+		topic, err := sns.NewTopic(ctx, "userUpdates", &sns.TopicArgs{
+			DeliveryPolicy: pulumi.String(`{
+    		"http": {
+    		"defaultHealthyRetryPolicy": {
+      		"minDelayTarget": 20,
+      		"maxDelayTarget": 20,
+      		"numRetries": 3,
+      		"numMaxDelayRetries": 0,
+      		"numNoDelayRetries": 0,
+      		"numMinDelayRetries": 0,
+      		"backoffFunction": "linear"
+    		},
+    		"disableSubscriptionOverrides": false,
+    		"defaultThrottlePolicy": {
+      		"maxReceivesPerSecond": 1
+    		}
+  		}
+	}`),
+		})
+		if err != nil {
+			return err
+		}
+
+		topic.Arn.ApplyT(
+			func(args interface{}) (string, error) {
+				arn := args.(string)
+				userData = strings.Replace(userData, "${SUBMISSION_TOPIC_ARN}", arn, -1)
+				return arn, nil
+			})
+
 		//Create a Launch Template
-		launchTemplate, err := ec2.NewLaunchTemplate(ctx, "launch-again-take-2", &ec2.LaunchTemplateArgs{
+		launchTemplate, err := ec2.NewLaunchTemplate(ctx, LaunchTemplateName, &ec2.LaunchTemplateArgs{
+			Name:                  pulumi.String(LaunchTemplateName),
 			ImageId:               pulumi.String(amiID),
 			InstanceType:          pulumi.String(instanceType),
 			KeyName:               pulumi.String("Cloud"),
 			DisableApiTermination: pulumi.Bool(false),
-			//NetworkInterfaces: ec2.LaunchTemplateNetworkInterfaceArray{
-			//	&ec2.LaunchTemplateNetworkInterfaceArgs{
-			//		AssociatePublicIpAddress: pulumi.String("true"),
-			//		SecurityGroups:           pulumi.StringArray{webSecurityGroup.ID()},
-			//	},
-			//},
-			VpcSecurityGroupIds: pulumi.StringArray{webSecurityGroup.ID()},
+			VpcSecurityGroupIds:   pulumi.StringArray{webSecurityGroup.ID()},
 			IamInstanceProfile: &ec2.LaunchTemplateIamInstanceProfileArgs{
 				Name: instanceProfile.Name,
 			},
-			//VpcSecurityGroupIds: pulumi.StringArray{webSecurityGroup.ID()},
 			UserData: rdsInstance.Endpoint.ApplyT(
 				func(args interface{}) (string, error) {
 					endpoint := args.(string)
@@ -459,11 +489,12 @@ func main() {
 					return encodedUserData, nil
 				},
 			).(pulumi.StringOutput),
-		},
+		}, pulumi.DependsOn([]pulumi.Resource{topic}),
 		)
 		if err != nil {
 			return err
 		}
+
 		// Create a Target Group
 		tg, err := alb.NewTargetGroup(ctx, "tg", &alb.TargetGroupArgs{
 			Port:       pulumi.Int(8080),
@@ -484,8 +515,8 @@ func main() {
 		}
 
 		// Create an Autoscaling Group
-		asgGroup, err := autoscaling.NewGroup(ctx, "Auto-Scaling-Group", &autoscaling.GroupArgs{
-
+		asgGroup, err := autoscaling.NewGroup(ctx, autoscalingName, &autoscaling.GroupArgs{
+			Name:                   pulumi.String(autoscalingName),
 			MinSize:                pulumi.Int(1),
 			MaxSize:                pulumi.Int(3),
 			DesiredCapacity:        pulumi.Int(1),
@@ -493,7 +524,8 @@ func main() {
 			HealthCheckType:        pulumi.String("ELB"),
 			HealthCheckGracePeriod: pulumi.Int(300),
 			LaunchTemplate: &autoscaling.GroupLaunchTemplateArgs{
-				Id: launchTemplate.ID(),
+				Id:      launchTemplate.ID(),
+				Version: pulumi.String("$Latest"),
 			},
 			VpcZoneIdentifiers: pulumi.StringArray{publicsubnetIds[0]},
 			TargetGroupArns:    pulumi.StringArray{tg.Arn},
@@ -501,6 +533,7 @@ func main() {
 		if err != nil {
 			return err
 		}
+
 		// Create scale up policy
 		scaleupPolicy, err := autoscaling.NewPolicy(ctx, "scale-up-policy", &autoscaling.PolicyArgs{
 			AdjustmentType:       pulumi.String("ChangeInCapacity"),
@@ -577,20 +610,29 @@ func main() {
 		if err != nil {
 			return err
 		}
-
-		//Create a Load Balancer Listener
-		_, err = alb.NewListener(ctx, "Listener", &alb.ListenerArgs{
-			DefaultActions: alb.ListenerDefaultActionArray{
+		//Lookup for the certificate
+		cert, err := acm.LookupCertificate(ctx, &acm.LookupCertificateArgs{
+			Domain: "demo.cjoshi.tech",
+			Statuses: []string{
+				"ISSUED",
+			}},
+		)
+		if err != nil {
+			return err
+		}
+		// Create a Listener
+		_, err = alb.NewListener(ctx, "elb-Listener", &alb.ListenerArgs{
+			LoadBalancerArn: lb.Arn,
+			Port:            pulumi.Int(443),
+			Protocol:        pulumi.String("HTTPS"),
+			CertificateArn:  pulumi.String(cert.Arn),
+			DefaultActions: &alb.ListenerDefaultActionArray{
 				&alb.ListenerDefaultActionArgs{
-					Type:           pulumi.String("forward"),
 					TargetGroupArn: tg.Arn,
+					Type:           pulumi.String("forward"),
 				},
 			},
-			LoadBalancerArn: lb.Arn,
-			Port:            pulumi.Int(80),
-			Protocol:        pulumi.String("HTTP"),
 		})
-
 		// Create a new A Record
 		_, err = route53.NewRecord(ctx, "A-RECORD", &route53.RecordArgs{
 			Name:   pulumi.String(domainName),
@@ -609,29 +651,6 @@ func main() {
 			return err
 		}
 
-		// Create a SNS Topic
-		topic, err := sns.NewTopic(ctx, "userUpdates", &sns.TopicArgs{
-			DeliveryPolicy: pulumi.String(`{
-    		"http": {
-    		"defaultHealthyRetryPolicy": {
-      		"minDelayTarget": 20,
-      		"maxDelayTarget": 20,
-      		"numRetries": 3,
-      		"numMaxDelayRetries": 0,
-      		"numNoDelayRetries": 0,
-      		"numMinDelayRetries": 0,
-      		"backoffFunction": "linear"
-    		},
-    		"disableSubscriptionOverrides": false,
-    		"defaultThrottlePolicy": {
-      		"maxReceivesPerSecond": 1
-    		}
-  		}
-	}`),
-		})
-		if err != nil {
-			return err
-		}
 		// Create a DynamoDB Table
 		table, err := dynamodb.NewTable(ctx, "Table", &dynamodb.TableArgs{
 			Attributes: dynamodb.TableAttributeArray{
@@ -652,17 +671,11 @@ func main() {
 			return err
 		}
 
-		topic.Arn.ApplyT(
-			func(args interface{}) (string, error) {
-				arn := args.(string)
-				userData = strings.Replace(userData, "${SUBMISSION_TOPIC_ARN}", arn, -1)
-				return arn, nil
-			})
 		//Create a Google Cloud Storage Bucket
 		bucket, err := storage.NewBucket(ctx, "chandana_Bucket", &storage.BucketArgs{
 			Location:               pulumi.String("US"),
-			Name:                   pulumi.String("chandana-bucket"),
-			Project:                pulumi.String("development-406400"),
+			Name:                   pulumi.String(BucketName),
+			Project:                pulumi.String(GCPProjectName),
 			StorageClass:           pulumi.String("STANDARD"),
 			PublicAccessPrevention: pulumi.String("enforced"),
 			ForceDestroy:           pulumi.Bool(true),
@@ -672,11 +685,11 @@ func main() {
 		}
 
 		//Create a Service Account for Bucket
-		serviceAccount, err := serviceaccount.NewAccount(ctx, "My-Account", &serviceaccount.AccountArgs{
+		serviceAccount, err := serviceaccount.NewAccount(ctx, ServiceAccount, &serviceaccount.AccountArgs{
 
 			AccountId:   pulumi.String("service-account-id"),
-			DisplayName: pulumi.String("My-Account"),
-			Project:     pulumi.String("development-406400"),
+			DisplayName: pulumi.String(ServiceAccount),
+			Project:     pulumi.String(GCPProjectName),
 		})
 		if err != nil {
 			return err
@@ -691,7 +704,7 @@ func main() {
 			return err
 		}
 		//Create Access Keys
-		AccessKey, err := serviceaccount.NewKey(ctx, "My-Key", &serviceaccount.KeyArgs{
+		AccessKey, err := serviceaccount.NewKey(ctx, GCPKeyName, &serviceaccount.KeyArgs{
 			ServiceAccountId: serviceAccount.Name,
 			PublicKeyType:    pulumi.String("TYPE_RAW_PUBLIC_KEY"),
 		})
@@ -750,9 +763,9 @@ func main() {
 		// Create a Trigger to lambda from SNS
 		_, err = lambda.NewPermission(ctx, "lambda_permission", &lambda.PermissionArgs{
 			Action:    pulumi.String("lambda:InvokeFunction"),
-			Function:  function.Name, // replace `lambda_function` with your Lambda Function resource
+			Function:  function.Name,
 			Principal: pulumi.String("sns.amazonaws.com"),
-			SourceArn: topic.Arn, // replace `sns_topic` with your SNS Topic resource
+			SourceArn: topic.Arn,
 		})
 		if err != nil {
 			return err
