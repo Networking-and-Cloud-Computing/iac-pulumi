@@ -19,3 +19,8 @@ Before running the Pulumi program, validate the following:
 You have installed the pulumi command line interface You have configured AWS credentials in your local environment Running the Pulumi Program Run pulumi up command in your terminal from the directory where you have this Pulumi program. This will start the provisioning of the AWS resources in your default AWS region.
 
 Press y or enter when you get the prompt Do you want to perform this update? to confirm and proceed with creating the resources.
+
+ command to import the certificate from Local to AWS Certificate Manager:
+  aws acm import-certificate --profile demo \
+    --certificate fileb://demo_cjoshi_tech.crt \
+    --private-key fileb://private.key
