@@ -2,11 +2,11 @@ config:
   aws:profile: demo
   aws:region: us-east-1
   gcp:project: Demo
-  iac-pulumi:amiID: ami-0878dd06a9a8301ca
+  iac-pulumi:amiID: [AMI_ID]
   iac-pulumi:appSecurityGroupName: webSecurityGroup
   iac-pulumi:cidrBlock: 10.0.0.0/16
-  iac-pulumi:dbName: Joshi
-  iac-pulumi:dbPassword: Password123
+  iac-pulumi:dbName: [DB_NAME]
+  iac-pulumi:dbPassword: [PASSWORD]
   iac-pulumi:dbSecurityGroupName: dbSecurityGroup
   iac-pulumi:dbUserName: cjoshi
   iac-pulumi:destinationBlock: 0.0.0.0/0
@@ -16,7 +16,7 @@ config:
   iac-pulumi:internetGatewayName: Internet-Gateway
   iac-pulumi:lbSecurityGroup: load-weights
   iac-pulumi:paramsName: why-gawdd-why
-  iac-pulumi:path: /Users/cjoshi/Desktop/Serverless/deployment-package.zip
+  iac-pulumi:path: FAKEPATH/Serverless/deployment-package.zip
   iac-pulumi:privateRouteAssociationName: private-RTA-
   iac-pulumi:privateRouteTableName: Private-Route-Table
   iac-pulumi:privateSubnetGroupName: alive
@@ -24,7 +24,7 @@ config:
   iac-pulumi:publicRouteAssociationName: public-RTA-
   iac-pulumi:publicRouteTableName: Public-Route-Table
   iac-pulumi:publicSubnetName: public-subnet-
-  iac-pulumi:rdsInstanceName: please-work
+  iac-pulumi:rdsInstanceName: [NAME]
   iac-pulumi:vpcName: my-vpc
   iac-pulumi:autoscalingName : webapp-autoscaling-group
   iac-pulumi:LaunchTemplateName : webapp-launch-template
